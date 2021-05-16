@@ -167,6 +167,7 @@ class ACMEv2 {
 		if (is_array($arr)) {
 			$out[] = $arr['message'];
 		}
+
 		$out[] = openssl_error_string();
 
 		return implode(' | ', $out);
@@ -252,34 +253,44 @@ class ACMEv2 {
 		$protected64 = $this->base64url(json_encode($protected));
 		$payload64 = $this->base64url(is_string($payload) ? $payload : json_encode($payload));
 
-		if (false === openssl_sign(
-			$protected64 . '.' . $payload64,
-			$signature,
-			$this->account_key,
-			'SHA' . $this->sha_bits
-		)) {
+		if (false === openssl_sign($protected64 . '.' . $payload64, $signature, $this->account_key, 'SHA' . $this->sha_bits)) {
 			throw new Exception('Failed to sign payload !' . ' (' . $this->get_openssl_error() . ')');
 		}
 
-		return array(
+		return [
 			'protected' => $protected64,
 			'payload' => $payload64,
-			'signature' => $this->base64url($this->jwk_header['alg'][0] == 'R' ? $signature : $this->asn2signature($signature, ceil($this->bits / 8)))
-		);
+			'signature' => $this->base64url($this->jwk_header['alg'][0] == 'R' ? $signature : $this->asn2signature($signature, ceil($this->bits / 8))),
+		];
 	}
 
 	private function asn2signature($asn, $pad_len) {
-		if ($asn[0] !== "\x30") throw new Exception('ASN.1 SEQUENCE not found !');
+		if ($asn[0] !== "\x30") {
+			throw new Exception('ASN.1 SEQUENCE not found !');
+		}
+
 		$asn = substr($asn, $asn[1] === "\x81" ? 3 : 2);
-		if ($asn[0] !== "\x02") throw new Exception('ASN.1 INTEGER 1 not found !');
+
+		if ($asn[0] !== "\x02") {
+			throw new Exception('ASN.1 INTEGER 1 not found !');
+		}
+
 		$R = ltrim(substr($asn, 2, ord($asn[1])), "\x00");
 		$asn = substr($asn, ord($asn[1]) + 2);
-		if ($asn[0] !== "\x02") throw new Exception('ASN.1 INTEGER 2 not found !');
+		if ($asn[0] !== "\x02") {
+			throw new Exception('ASN.1 INTEGER 2 not found !');
+		}
+
 		$S = ltrim(substr($asn, 2, ord($asn[1])), "\x00");
 		return str_pad($R, $pad_len, "\x00", STR_PAD_LEFT) . str_pad($S, $pad_len, "\x00", STR_PAD_LEFT);
 	}
 
-	protected function base64url($data) { // RFC7515 - Appendix C
+	/**
+	 * RFC7515 - Appendix C
+	 * @param mixed $data
+	 * @return string
+	 */
+	protected function base64url($data) {
 		return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
 	}
 
@@ -306,8 +317,8 @@ class ACMEv2 {
 		$user_agent = 'ACMECert v2.8 (+https://github.com/skoerfgen/ACMECert)';
 		$header = ($data === null || $data === false) ? array() : array('Content-Type: application/jose+json');
 		if ($this->ch) {
-			$headers = array();
-			curl_setopt_array($this->ch, array(
+			$headers = [];
+			curl_setopt_array($this->ch, [
 				CURLOPT_URL => $url,
 				CURLOPT_FOLLOWLOCATION => true,
 				CURLOPT_RETURNTRANSFER => true,
@@ -321,22 +332,24 @@ class ACMEv2 {
 					$headers[] = $header;
 					return strlen($header);
 				}
-			));
+			]);
 			$took = microtime(true);
 			$body = curl_exec($this->ch);
 			$took = round(microtime(true) - $took, 2) . 's';
-			if ($body === false) throw new Exception('HTTP Request Error: ' . curl_error($this->ch));
+			if ($body === false) {
+				throw new Exception(sprintf('HTTP Request Error: %s', curl_error($this->ch)));
+			}
 		} else {
-			$opts = array(
-				'http' => array(
+			$opts = [
+				'http' => [
 					'header' => $header,
 					'method' => $method,
 					'user_agent' => $user_agent,
 					'ignore_errors' => true,
 					'timeout' => 60,
-					'content' => $data
-				)
-			);
+					'content' => $data,
+				],
+			];
 			$took = microtime(true);
 			$body = file_get_contents($url, false, stream_context_create($opts));
 			$took = round(microtime(true) - $took, 2) . 's';
@@ -344,7 +357,9 @@ class ACMEv2 {
 			$headers = $http_response_header;
 		}
 
-		$headers = array_reduce( // parse http response headers into array
+		// parse http response headers into array
+		$code = null;
+		$headers = array_reduce(
 			array_filter($headers, function ($item) {
 				return trim($item) != '';
 			}),
@@ -352,15 +367,16 @@ class ACMEv2 {
 				$parts = explode(':', $item, 2);
 				if (count($parts) === 1) {
 					list(, $code) = explode(' ', trim($item), 3);
-					$carry = array();
+					$carry = [];
 				} else {
 					list($k, $v) = $parts;
 					$carry[strtolower(trim($k))] = trim($v);
 				}
 				return $carry;
 			},
-			array()
+			[]
 		);
+
 		$this->log('  ' . $url . ' [' . $code . '] (' . $took . ')');
 
 		if (!empty($headers['replay-nonce'])) $this->nonce = $headers['replay-nonce'];
@@ -380,21 +396,21 @@ class ACMEv2 {
 								$subproblem['type'],
 								'"' . $subproblem['identifier']['value'] . '": ' . $subproblem['detail']
 							);
-						}, isset($body['subproblems']) ? $body['subproblems'] : array())
+						}, isset($body['subproblems']) ? $body['subproblems'] : [])
 					);
 					break;
 			}
 		}
 
 		if ($code[0] != '2') {
-			throw new Exception('Invalid HTTP-Status-Code received: ' . $code . ': ' . $url);
+			throw new Exception(sprintf('Invalid HTTP-Status-Code received: %s: %s', $code, $url));
 		}
 
-		$ret = array(
+		$ret = [
 			'code' => $code,
 			'headers' => $headers,
 			'body' => $body
-		);
+		];
 
 		return $ret;
 	}
