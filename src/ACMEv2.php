@@ -42,7 +42,7 @@ class ACMEv2 {
 		'staging' => 'https://acme-staging-v02.api.letsencrypt.org/directory'
 	];
 	protected string $mode = 'live';
-	protected string $directory = null;
+	protected string $directory = '';
 
 	protected $ch = null;
 	protected $bits;
@@ -67,7 +67,7 @@ class ACMEv2 {
 	 * @return void
 	 */
 	public function __destruct() {
-		if ($this->account_key) {
+		if (PHP_MAJOR_VERSION < 8 and $this->account_key) {
 			openssl_pkey_free($this->account_key);
 		}
 
@@ -83,7 +83,7 @@ class ACMEv2 {
 	 * @throws Exception
 	 */
 	public function loadAccountKey($account_key_pem) {
-		if ($this->account_key) {
+		if (PHP_MAJOR_VERSION < 8 and $this->account_key) {
 			openssl_pkey_free($this->account_key);
 		}
 
@@ -314,7 +314,7 @@ class ACMEv2 {
 			}
 		}
 		$method = $data === false ? 'HEAD' : ($data === null ? 'GET' : 'POST');
-		$user_agent = 'ACMECert v2.8 (+https://github.com/skoerfgen/ACMECert)';
+		$user_agent = 'ACMECert v2.8.1 (+https://github.com/skoerfgen/ACMECert)';
 		$header = ($data === null || $data === false) ? array() : array('Content-Type: application/jose+json');
 		if ($this->ch) {
 			$headers = [];
